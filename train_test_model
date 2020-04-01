@@ -1,0 +1,114 @@
+#import important libraries
+from __future__ import division, print_function, absolute_import, unicode_literals
+import tensorflow as tf
+import tensorflow_hub as hub
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import numpy as np
+import matplotlib.pyplot  as plt
+from tensorflow.keras.optimizers import SGD
+import os
+import glob
+import shutil
+
+base_dir=r"C:\Soup"
+classes=['afang','egusi','ewedu','oha','okro']
+
+#separate the data into train and validation set
+for cl in classes:
+  img_path = os.path.join(base_dir, cl)
+  images = glob.glob(img_path + '/*.jpeg')
+  print("{}: {} Images".format(cl, len(images)))
+  train, val = images[:round(len(images)*0.8)], images[round(len(images)*0.8):]
+
+  for t in train:
+    if not os.path.exists(os.path.join(base_dir, 'train', cl)):
+      os.makedirs(os.path.join(base_dir, 'train', cl))
+    shutil.move(t, os.path.join(base_dir, 'train', cl))
+
+  for v in val:
+    if not os.path.exists(os.path.join(base_dir, 'val', cl)):
+      os.makedirs(os.path.join(base_dir, 'val', cl))
+    shutil.move(v, os.path.join(base_dir, 'val', cl))
+train_dir = os.path.join(base_dir, 'train')
+val_dir = os.path.join(base_dir, 'val')
+
+batch_size=60
+img=150
+IMG=224
+
+#create image generator using 150 as image shape and applying data augmentation
+image_gen = ImageDataGenerator(rescale=1./255, horizontal_flip=True, zoom_range=0.5, rotation_range=0.7,
+                              height_shift_range=0.2, width_shift_range=0.2)
+
+train_data_gen = image_gen.flow_from_directory( directory=train_dir, target_size=(img, img),
+                                               shuffle=True, batch_size=batch_size
+                                               )
+image_gen=ImageDataGenerator(rescale=1./255)
+
+val_data_gen=image_gen.flow_from_directory(target_size=(img,img), directory=val_dir, batch_size=batch_size, 
+                                           shuffle=False, class_mode='categorical')
+
+#construct the layers of the model
+model=tf.keras.Sequential([
+    tf.keras.layers.Conv2D(32, 3,input_shape=(img, img, 3), padding='same',activation='relu'),
+    tf.keras.layers.MaxPooling2D((2,2)),
+    tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu'),
+    tf.keras.layers.MaxPooling2D((2,2)),
+    tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu'),
+    tf.keras.layers.MaxPooling2D((2,2)),
+    tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu'),
+    tf.keras.layers.MaxPooling2D((2,2)),
+    tf.keras.layers.Conv2D(256,3, padding='same', activation='relu'),
+    
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(512,activation='relu'),
+    tf.keras.layers.Dropout(0.3),
+    tf.keras.layers.Dense(512, activation='relu'),
+    tf.keras.layers.Dropout(0.3),
+    tf.keras.layers.Dense(5, activation='softmax')
+])
+
+#compile and train the model while visualizing the testing and training accuracy for each epoch
+model.compile(loss='categorical_crossentropy', optimizer=SGD(lr=0.0001), metrics=['accuracy'])
+EPOCHS = 5
+
+history = model.fit_generator(train_data_gen, 
+                             steps_per_epoch=int(np.ceil(train_data_gen.n/float(batch_size))),
+                             epochs=EPOCHS,
+                             validation_data=val_data_gen,
+                             validation_steps=int(np.ceil(val_data_gen.n / float(batch_size))))
+
+#Creating image generator for our pretrained model which uses input shape 224
+model.compile(loss='categorical_crossentropy', optimizer=SGD(lr=0.0001), metrics=['accuracy'])
+EPOCHS = 5
+
+history = model.fit_generator(train_data_gen, 
+                             steps_per_epoch=int(np.ceil(train_data_gen.n/float(batch_size))),
+                             epochs=EPOCHS,
+                             validation_data=val_data_gen,
+                             validation_steps=int(np.ceil(val_data_gen.n / float(batch_size))))
+image_gen_train = ImageDataGenerator(rescale=1./255)
+
+val_data_gen=image_gen_train.flow_from_directory(target_size=(IMG, IMG), directory=val_dir,
+                                                 batch_size=batch_size, class_mode='categorical')
+
+#editting the output layers of our pretrained model
+url=r"https://tfhub.dev/google/tf2-preview/mobilenet_v2/classification/2"
+feature_extractor=hub.KerasLayer(url, input_shape=(IMG,IMG,3))
+model=tf.keras.Sequential([
+    feature_extractor,
+    tf.keras.layers.Dense(5, activation='softmax')
+])
+model.summary()
+
+#compile and train pretrained model
+model.compile(
+  optimizer=SGD(lr=0.01),
+  loss='categorical_crossentropy',
+  metrics=['accuracy'])
+
+EPOCHS = 100
+history = model.fit(train_data_gen,
+                    epochs=EPOCHS,
+                    validation_data=val_data_gen)
+model.save(r"C:\Soup\soup model")
